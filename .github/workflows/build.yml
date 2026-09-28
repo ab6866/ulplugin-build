@@ -1,0 +1,174 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # 目标特征全部由 Secrets 注入；仓库内零真实标识
+  TWEAK_SRC_B64: ${{ secrets.TWEAK_SRC_B64 }}
+  BUNDLE_IDS: ${{ secrets.BUNDLE_IDS }}
+  TARGET_PROCS: ${{ secrets.TARGET_PROCS }}
+  TWEAK_NAME: ${{ secrets.TWEAK_NAME }}
+  PKG_ID: ${{ secrets.PKG_ID }}
+  PKG_NAME: ${{ secrets.PKG_NAME }}
+  PKG_VERSION: ${{ secrets.PKG_VERSION }}
+  PKG_AUTHOR: ${{ secrets.PKG_AUTHOR }}
+  PKG_DESC: ${{ secrets.PKG_DESC }}
+  UL_PATCHES: ${{ secrets.UL_PATCHES }}
+  UL_IMAGE_BASE: ${{ secrets.UL_IMAGE_BASE }}
+  UL_TEXT_SPAN: ${{ secrets.UL_TEXT_SPAN }}
+  UL_LOG_PATH: ${{ secrets.UL_LOG_PATH }}
+  UL_BIN_NAME: ${{ secrets.UL_BIN_NAME }}
+
+jobs:
+  build:
+    name: theos build
+    # ★ 必须是 macOS：只有 Apple 官方 iOS SDK 能产出真 arm64e 切片。
+    #   Linux clang 编 arm64e 与 arm64 结果相同（ptrauth 指令 0 条），
+    #   而 RootHide 环境需要 arm64e → 单 arm64 包会被静默跳过、插件毫无反应。
+    runs-on: macos-14
+    timeout-minutes: 40
+
+    env:
+      THEOS: ${{ github.workspace }}/theos
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain evidence
+        run: |
+          sw_vers | head -2
+          uname -m
+          clang --version | head -1
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          echo "iOS SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
+          # 证明 arm64e 真能编出 ptrauth 指令（arm64 应为 0）
+          printf 'extern int f(int);\nint g(int x){return f(x)+1;}\n' > /tmp/p.c
+          for A in arm64 arm64e; do
+            clang -c -O2 -arch "$A" -isysroot "$SDK" -miphoneos-version-min=15.0 \
+              -o "/tmp/p_$A.o" /tmp/p.c
+            N="$(otool -tv "/tmp/p_$A.o" | grep -cE 'paciasp|autiasp|pacibsp|autibsp' || true)"
+            echo "  -arch $A : pac/aut = $N"
+          done
+          echo "  (arm64e 应 > 0；arm64 应为 0)"
+
+      - name: Install ldid + dpkg
+        run: |
+          brew install ldid dpkg || true
+          command -v ldid || echo "!! ldid 不可用"
+          command -v dpkg-deb || echo "!! dpkg-deb 不可用"
+
+      - name: Install rootHide Theos
+        run: |
+          set -e
+          git clone --recursive --depth=1 https://github.com/roothide/theos.git "$THEOS"
+          git -C "$THEOS" log -1 --oneline
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          VER="$(xcrun --sdk iphoneos --show-sdk-version)"
+          mkdir -p "$THEOS/sdks"
+          [ -e "$THEOS/sdks/iPhoneOS$VER.sdk" ] || \
+            ln -s "$SDK" "$THEOS/sdks/iPhoneOS$VER.sdk"
+          ls -d "$THEOS"/sdks/*.sdk
+
+      - name: Materialise project from secrets
+        run: python3 ci/materialise.py
+
+      - name: Build (roothide)
+        run: |
+          # ★ pipefail 必须开：否则 `make ... | tail` 的退出码是 tail 的，
+          #   构建失败也会被当成成功（最危险的自欺）。
+          set -exo pipefail
+          export PATH="$THEOS/bin:$PATH"
+          sed -i.bak "s/@@TWEAK_NAME@@/$TWEAK_NAME/g" Makefile && rm -f Makefile.bak
+          grep -E "^TWEAK_NAME|_LDFLAGS" Makefile
+          SCHEME=roothide python3 ci/render_control.py
+          make clean || true
+          make package THEOS_PACKAGE_SCHEME=roothide FINALPACKAGE=1 DEBUG=0
+          ls -la packages/
+          test "$(find packages -name '*.deb' | wc -l | tr -d ' ')" -ge 1 \
+            || { echo "!! roothide 未产出 .deb"; exit 1; }
+          mkdir -p /tmp/rha && find packages -name '*.deb' -exec cp {} /tmp/rha/ \;
+
+      - name: Build (rootless)
+        run: |
+          set -exo pipefail
+          export PATH="$THEOS/bin:$PATH"
+          sed -i.bak "s/@@TWEAK_NAME@@/$TWEAK_NAME/g" Makefile && rm -f Makefile.bak
+          SCHEME=rootless python3 ci/render_control.py
+          make clean || true
+          make package THEOS_PACKAGE_SCHEME=rootless FINALPACKAGE=1 DEBUG=0
+          ls -la packages/
+          test "$(find packages -name '*.deb' | wc -l | tr -d ' ')" -ge 1 \
+            || { echo "!! rootless 未产出 .deb"; exit 1; }
+          mkdir -p /tmp/rla && find packages -name '*.deb' -exec cp {} /tmp/rla/ \;
+
+      - name: Static acceptance
+        run: |
+          set -e
+          echo "############ built dylibs ############"
+          for D in $(find .theos -name '*.dylib' 2>/dev/null); do
+            echo "--- $D"
+            lipo -info "$D" || true
+            for A in arm64 arm64e; do
+              N="$(otool -tv -arch "$A" "$D" 2>/dev/null | grep -cE 'paciasp|autiasp|pacibsp|autibsp' || true)"
+              echo "    -arch $A : pac/aut = $N"
+            done
+            echo "    __mod_init_func = $(otool -l "$D" | grep -c '__mod_init_func' || true)"
+            echo "    LC_CODE_SIGNATURE = $(otool -l "$D" | grep -c LC_CODE_SIGNATURE || true)"
+          done
+
+          echo
+          echo "############ unpacked packages ############"
+          for DEB in $(find /tmp/rha /tmp/rla -name '*.deb' 2>/dev/null); do
+            echo "===== $(basename "$DEB") ====="
+            dpkg-deb -f "$DEB" Package Architecture Version 2>/dev/null | sed 's/^/  /'
+            dpkg-deb -c "$DEB" 2>/dev/null | grep -v '^tar:' | sed 's/^/  /'
+            # 断言全套维护脚本齐全
+            rm -rf /tmp/ctlchk; mkdir -p /tmp/ctlchk
+            if dpkg-deb -e "$DEB" /tmp/ctlchk 2>/dev/null; then
+              for S in preinst postinst prerm postrm; do
+                if [ -f "/tmp/ctlchk/$S" ]; then
+                  echo "  assert: $S present ($(wc -c </tmp/ctlchk/$S | tr -d ' ') B)"
+                else
+                  echo "  assert: !! $S MISSING"
+                fi
+              done
+              grep -q '/proc' /tmp/ctlchk/postinst \
+                && echo "  assert: /proc fallback present" \
+                || echo "  assert: !! no /proc fallback"
+              grep -q 'jbroot' /tmp/ctlchk/postinst \
+                && echo "  assert: jbroot resolver present" \
+                || echo "  assert: !! no jbroot resolver"
+            fi
+          done
+
+      - name: Collect artifacts
+        run: |
+          set -e
+          mkdir -p dist
+          # 按架构区分两个 scheme，并重命名为中性名
+          for DEB in $(find /tmp/rha -name '*.deb'); do cp "$DEB" "dist/plugin-roothide.deb"; done
+          for DEB in $(find /tmp/rla -name '*.deb'); do cp "$DEB" "dist/plugin-rootless.deb"; done
+          ls -la dist/
+          test -f dist/plugin-roothide.deb || { echo "!! 缺 roothide 包"; exit 1; }
+          test -f dist/plugin-rootless.deb || { echo "!! 缺 rootless 包"; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: dist/*.deb
+          if-no-files-found: error
+
+      - name: Release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: build-${{ github.run_number }}
+          files: dist/*.deb
+          fail_on_unmatched_files: false

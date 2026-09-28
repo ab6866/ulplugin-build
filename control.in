@@ -1,0 +1,10 @@
+Package: @@PKG_ID@@
+Name: @@PKG_NAME@@
+Version: @@PKG_VERSION@@
+Description: @@PKG_DESC@@
+Maintainer: @@PKG_AUTHOR@@
+Author: @@PKG_AUTHOR@@
+Section: Tweaks
+Depends: mobilesubstrate
+Conflicts: @@PKG_CONFLICT@@
+Replaces: @@PKG_CONFLICT@@

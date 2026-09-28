@@ -1,0 +1,20 @@
+# 构建期生成物（含目标特征，绝不入库）
+layout/
+ul_config.h
+Tweak.x
+control
+*.plist
+packages/
+.theos/
+dist/
+build.log
+generated/
+ticonfig.h
+.dylibname
+
+*.o
+*.dylib
+*.deb
+.DS_Store
+__pycache__/
+*.pyc
