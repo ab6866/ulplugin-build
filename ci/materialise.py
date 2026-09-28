@@ -49,6 +49,7 @@ def main():
     os.makedirs(os.path.join(LAYOUT, 'DEBIAN'), exist_ok=True)
     dylib_dir = os.path.join(LAYOUT, 'Library', 'MobileSubstrate', 'DynamicLibraries')
     os.makedirs(dylib_dir, exist_ok=True)
+    os.makedirs(LAYOUT, exist_ok=True)
 
     # ---- 补丁表头文件 ----
     lines = [
@@ -83,8 +84,11 @@ def main():
         print('!! ticonfig.h 生成失败'); sys.exit(1)
 
     # ---- filter plist（顶层必须直接是 Filter）----
-    with open(os.path.join(dylib_dir, 'Tweak.plist'), 'wb') as f:
-        plistlib.dump({'Filter': {'Bundles': [bundle_id]}}, f)
+    # Theos 在 staging 阶段从**项目根目录**读 Tweak.plist，两种位置都放一份。
+    flt = {'Filter': {'Bundles': [bundle_id]}}
+    for p in (os.path.join(ROOT, 'Tweak.plist'), os.path.join(dylib_dir, 'Tweak.plist')):
+        with open(p, 'wb') as f:
+            plistlib.dump(flt, f)
 
     # ---- 维护脚本：结束目标进程，让下次冷启动重新注入 ----
     postinst = '''#!/bin/sh
