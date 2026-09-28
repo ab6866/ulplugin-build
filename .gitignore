@@ -1,13 +1,18 @@
 # 构建期生成物（含目标特征，绝不入库）
-tweak/generated/
+generated/
+ticonfig.h
+Tweak.x
+layout/
 spec.json
 dist/
+packages/
+.theos/
 build.log
-dsc/
 
 # 编译中间产物
 *.o
 *.dylib
+*.deb
 
 # 系统
 .DS_Store

@@ -134,9 +134,16 @@ static int ul_apply(void) {
         }
     }
 
-    // AArch64: I-cache 与 D-cache 不同步，必须清理
-    __builtin___clear_cache((char *)(uintptr_t)UL_IMAGE_BASE,
-                            (char *)(uintptr_t)((uint64_t)UL_IMAGE_BASE + UL_TEXT_SPAN));
+    // AArch64: I-cache 与 D-cache 不同步，改码后必须清 I-cache。
+    // 不用 __builtin___clear_cache（iOS SDK 不导出 ___clear_cache 符号），
+    // 改为标准的内存屏障序列：dsb ish + ic ivau 全范围 + dsb ish + isb。
+    {
+        __asm__ volatile("dsb ish" ::: "memory");
+        for (uint64_t a = UL_IMAGE_BASE; a < UL_IMAGE_BASE + UL_TEXT_SPAN; a += 128) {
+            __asm__ volatile("ic ivau, %0" :: "r"(a));
+        }
+        __asm__ volatile("dsb ish\nisb" ::: "memory");
+    }
     ul_log_hex("[UL] === applied = ", (unsigned long)applied);
     ul_log_hex("[UL] === should  = ", (unsigned long)UL_PATCH_COUNT);
     return applied;
