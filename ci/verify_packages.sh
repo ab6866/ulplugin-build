@@ -20,11 +20,11 @@ i=0
 for p in packages/*.deb; do
     [ -f "$p" ] || continue
     i=$((i + 1))
-    if grep -q "roothide" "$p" 2>/dev/null || dpkg-deb -f "$p" Package 2>/dev/null | grep -q roothide; then
-        cp "$p" "$ROOT/dist/tweak-roothide.deb"
-    else
-        cp "$p" "$ROOT/dist/tweak-rootless.deb"
-    fi
+    ARCH=$(dpkg-deb -f "$p" Architecture 2>/dev/null || echo "")
+    case "$ARCH" in
+        *arm64e*) cp "$p" "$ROOT/dist/tweak-roothide.deb" ;;
+        *)        cp "$p" "$ROOT/dist/tweak-rootless.deb" ;;
+    esac
 done
 
 echo "=== dist 产物 ==="

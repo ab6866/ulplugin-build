@@ -26,7 +26,7 @@ def env(name, default=None, required=True):
     return v
 
 
-def main():
+def main(scheme):
     app_name = env('UL_APP_NAME')
     bin_name = env('UL_BIN_NAME')
     bundle_id = env('UL_BUNDLE_ID')
@@ -130,9 +130,11 @@ exit 0
     # ---- control（Theos 需要 layout/DEBIAN/control）----
     ctrl = open(os.path.join(ROOT, 'control.in'), encoding='utf-8').read()
     ctrl = ctrl.replace('@@VERSION@@', version)
-    ctrl = ctrl.replace('@@PKG@@', 'com.6866.tweak.roothide')
-    ctrl = ctrl.replace('@@NAME@@', 'Tweak')
-    ctrl = ctrl.replace('@@OTHER@@', 'com.6866.tweak.rootless')
+    pkg = 'com.6866.tweak.%s' % scheme
+    other = 'com.6866.tweak.%s' % ('rootless' if scheme == 'roothide' else 'roothide')
+    ctrl = ctrl.replace('@@PKG@@', pkg)
+    ctrl = ctrl.replace('@@NAME@@', 'Tweak-%s' % scheme)
+    ctrl = ctrl.replace('@@OTHER@@', other)
     open(os.path.join(LAYOUT, 'DEBIAN', 'control'), 'w').write(ctrl)
 
     print('materialised:')
@@ -144,4 +146,4 @@ exit 0
 
 
 if __name__ == '__main__':
-    main()
+    main(sys.argv[1] if len(sys.argv) > 1 else 'roothide')

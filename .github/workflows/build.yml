@@ -62,27 +62,22 @@ jobs:
           [ -e "$THEOS/sdks/iPhoneOS$VER.sdk" ] || ln -s "$SDK" "$THEOS/sdks/iPhoneOS$VER.sdk"
           ls -d "$THEOS"/sdks/*.sdk
 
-      - name: Materialise project from secrets
-        run: |
-          set -e
-          python3 ci/materialise.py
-          echo "--- 生成的 Tweak.x 头部 ---"
-          head -20 Tweak.x
-          echo "--- filter plist ---"
-          cat layout/Library/MobileSubstrate/DynamicLibraries/Tweak.plist
-
       - name: Build rootHide package
         run: |
           set -e
+          python3 ci/materialise.py roothide
+          grep -E "^Package:" layout/DEBIAN/control
           make clean 2>/dev/null || true
-          THEOS_PACKAGE_SCHEME=roothide make package FINALPACKAGE=1 2>&1 | tail -40
+          THEOS_PACKAGE_SCHEME=roothide make package FINALPACKAGE=1 2>&1 | tail -20
           ls -la packages/
 
       - name: Build rootless package
         run: |
           set -e
+          python3 ci/materialise.py rootless
+          grep -E "^Package:" layout/DEBIAN/control
           make clean 2>/dev/null || true
-          THEOS_PACKAGE_SCHEME=rootless make package FINALPACKAGE=1 2>&1 | tail -40
+          THEOS_PACKAGE_SCHEME=rootless make package FINALPACKAGE=1 2>&1 | tail -20
           ls -la packages/
 
       - name: Verify artifacts
