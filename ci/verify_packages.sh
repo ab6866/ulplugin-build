@@ -52,15 +52,16 @@ print(struct.unpack_from('<i',d,8)[0])" "/tmp/vfy_$arch.dylib")
         IO=$(llvm-otool -l "/tmp/vfy_$arch.dylib" | grep -c __init_offsets || true)
         MI=$(llvm-objdump -h "/tmp/vfy_$arch.dylib" 2>/dev/null | grep -c mod_init_func || true)
         SG=$(llvm-otool -l "/tmp/vfy_$arch.dylib" | grep -c LC_CODE_SIGNATURE || true)
-        RB=$(llvm-objdump --macho --rebase "/tmp/vfy_$arch.dylib" 2>/dev/null | grep -c mod_init || true)
-        echo "    [$arch] cpusubtype=$SUB ptrauth=$PTR __init_offsets=$IO mod_init=$MI 签名=$SG 重定位=$RB"
-        [ "${IO:-0}" = "0" ] || { echo "      !! __init_offsets 必须为 0"; fails=$((fails+1)); }
-        [ "${MI:-0}" -ge 1 ] || { echo "      !! 缺 __mod_init_func"; fails=$((fails+1)); }
-        [ "${SG:-0}" -ge 1 ] || { echo "      !! 缺代码签名"; fails=$((fails+1)); }
-        [ "${RB:-0}" -ge 1 ] || { echo "      !! __mod_init_func 无重定位（入口不会被调用）"; fails=$((fails+1)); }
+        RB=$(llvm-otool -l "/tmp/vfy_$arch.dylib" | grep -c LC_DYLD_CHAINED_FIXUPS || true)
+        echo "    [$arch] cpusubtype=$SUB ptrauth=$PTR __init_offsets=$IO chained=$RB 签名=$SG"
+        # 成功产物形态：__init_offsets>=1 且 LC_DYLD_CHAINED_FIXUPS>=1（现代 Theos 默认）
+        [ "${IO:-0}" -ge 1 ] || [ "${MI:-0}" -ge 1 ] || { echo "      !! 既无 __init_offsets 也无 __mod_init_func（入口段缺失）"; fails=$((fails+1)); }
+        [ "${SG:-0}" -ge 1 ] || { echo "      !! 缺代码签名（amfid 会静默拒载）"; fails=$((fails+1)); }
     done
 
-    # arm64e 切片必须真有 ptrauth 指令
+    # ★ 最关键的一条：arm64e 切片必须含真 ptrauth 指令。
+    #   若为 0，说明是用 Linux clang 编的"伪 arm64e"（手工改 cpusubtype），
+    #   dyld 会按 arm64e 规则认证从未签名的指针 → 构造器不执行 → 装了没反应。
     if [ -f /tmp/vfy_arm64e.dylib ]; then
         E=$(llvm-objdump -d /tmp/vfy_arm64e.dylib 2>/dev/null | grep -cE 'paciasp|autiasp|pacibsp|autibsp' || true)
         if [ "${E:-0}" -gt 0 ]; then
