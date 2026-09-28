@@ -28,6 +28,11 @@ def env(name, default=None, required=True):
 
 def main(scheme):
     app_name = env('UL_APP_NAME')
+    # 用于命名的短标识（来自 Secret，避免仓库内出现任何真实标识）
+    ident = env('UL_IDENT', app_name, required=False)
+    display = env('UL_DISPLAY_NAME', ident, required=False)
+    desc = env('UL_DESC', 'Runtime modification utility', required=False)
+    dylib_name = '%sUnlock' % ident
     bin_name = env('UL_BIN_NAME')
     bundle_id = env('UL_BUNDLE_ID')
     version = env('VERSION', '1.1.0', required=False)
@@ -95,8 +100,8 @@ def main(scheme):
            '\t\t\t<string>%s</string>\n'
            '\t\t</array>\n\t</dict>\n</dict>\n</plist>\n' % bundle_id)
     # 只写与 dylib 同名的那一份（Theos staging 会从项目根目录找同名 plist）
-    for p in (os.path.join(ROOT, 'ULUnlock.plist'),
-              os.path.join(dylib_dir, 'ULUnlock.plist')):
+    for p in (os.path.join(ROOT, '%s.plist' % dylib_name),
+              os.path.join(dylib_dir, '%s.plist' % dylib_name)):
         with open(p, 'w') as f:
             f.write(xml)
 
@@ -143,17 +148,19 @@ def main(scheme):
     # ---- control（Theos 需要 layout/DEBIAN/control）----
     ctrl = open(os.path.join(ROOT, 'control.in'), encoding='utf-8').read()
     ctrl = ctrl.replace('@@VERSION@@', version)
-    pkg = 'com.6866.tweak.%s' % scheme
-    other = 'com.6866.tweak.%s' % ('rootless' if scheme == 'roothide' else 'roothide')
+    low = ident.lower()
+    pkg = 'com.6866.%s.roothide' % low if scheme == 'roothide' else 'com.6866.%s.rootless' % low
+    other = 'com.6866.%s.rootless' % low if scheme == 'roothide' else 'com.6866.%s.roothide' % low
     ctrl = ctrl.replace('@@PKG@@', pkg)
-    ctrl = ctrl.replace('@@NAME@@', 'Tweak-%s' % scheme)
-    # 接管同名 dylib，避免 dpkg 因 "trying to overwrite" 拒绝安装。
-    # 注意 dpkg 对重复字段只取最后一个，必须合并而不能追加。
+    ctrl = ctrl.replace('@@DISPLAY_NAME@@', '%s-%s' % (display, scheme))
+    ctrl = ctrl.replace('@@DESC@@', desc)
     ctrl = ctrl.replace('@@OTHER@@', other)
-    old_repl = 'Replaces: %s' % other
-    ctrl = ctrl.replace(old_repl,
-        'Replaces: %s, com.6866.subtrackerunlock.roothide, com.6866.subtrackerunlock.rootless' % other)
-    ctrl += 'Breaks: com.6866.subtrackerunlock.roothide, com.6866.subtrackerunlock.rootless\n'
+    # 接管历史包名，保证从旧版平滑升级、并避免同名文件被 dpkg 拒绝
+    legacy = ['com.6866.ulplugin.roothide', 'com.6866.ulplugin.rootless',
+              'com.6866.tweak.roothide', 'com.6866.tweak.rootless']
+    ctrl = ctrl.replace('Replaces: %s' % other,
+                        'Replaces: %s, %s' % (other, ', '.join(legacy)))
+    ctrl += 'Breaks: %s\n' % ', '.join(legacy)
     open(os.path.join(LAYOUT, 'DEBIAN', 'control'), 'w').write(ctrl)
 
     print('materialised:')
@@ -162,6 +169,9 @@ def main(scheme):
     print('  filter              %s' % bundle_id)
     print('  补丁数              %d' % len(patches))
     print('  目标进程            %s' % target_procs)
+    print('  dylib 名            %s' % dylib_name)
+    with open(os.path.join(ROOT, '.dylibname'), 'w') as f:
+        f.write(dylib_name)
 
 
 if __name__ == '__main__':

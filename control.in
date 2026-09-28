@@ -1,7 +1,7 @@
 Package: @@PKG@@
-Name: @@NAME@@
+Name: @@DISPLAY_NAME@@
 Version: @@VERSION@@
-Description: Runtime modification utility
+Description: @@DESC@@
 Maintainer: 6866
 Author: 6866
 Section: Tweaks
