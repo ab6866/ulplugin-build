@@ -1,0 +1,86 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 目标特征全部在构建期由 Secrets 注入；仓库内零真实标识。
+env:
+  UL_VERSION: 1.0.2
+  UL_APP_NAME: ${{ secrets.UL_APP_NAME }}
+  UL_BIN_NAME: ${{ secrets.UL_BIN_NAME }}
+  UL_BUNDLE_ID: ${{ secrets.UL_BUNDLE_ID }}
+  UL_IMAGE_BASE: ${{ secrets.UL_IMAGE_BASE }}
+  UL_TEXT_SPAN: ${{ secrets.UL_TEXT_SPAN }}
+  UL_PATCHES: ${{ secrets.UL_PATCHES }}
+  UL_LOG_PATH: ${{ secrets.UL_LOG_PATH }}
+  UL_BOOTSTRAP_CLASS: ${{ secrets.UL_BOOTSTRAP_CLASS }}
+
+# Release 需要写权限（GITHUB_TOKEN 默认只读）
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang lld llvm dpkg zlib1g-dev
+          clang --version | head -1
+          LD=""
+          for c in ld64.lld ld64.lld-18 ld64.lld-17 ld64.lld-16; do
+            if command -v "$c" >/dev/null 2>&1; then LD="$c"; break; fi
+          done
+          [ -n "$LD" ] || { echo "!! 找不到 ld64.lld"; exit 1; }
+          echo "LD=$LD" >> "$GITHUB_ENV"
+          echo "使用链接器: $LD"
+
+      - name: Build
+        # 不用 | tee —— 管道会吞掉 build.sh 的退出码
+        run: |
+          chmod +x ci/build.sh
+          CC=clang LD="$LD" sh ci/build.sh > build.log 2>&1 || { cat build.log; exit 1; }
+          cat build.log
+
+      - name: Verify artifacts
+        run: |
+          set -e
+          echo "=== dist ==="
+          ls -la dist/
+          [ -n "$(ls -A dist 2>/dev/null)" ] || { echo "!! dist 为空"; exit 1; }
+          for d in dist/*.deb; do
+            echo "--- $d"
+            dpkg-deb -I "$d"
+            dpkg-deb -c "$d"
+            echo "--- control.tar 成员"
+            dpkg-deb --ctrl-tarfile "$d" | tar -tf -
+            echo "--- 维护脚本语法"
+            dpkg-deb --ctrl-tarfile "$d" | tar -xO ./postinst > /tmp/pi.sh
+            sh -n /tmp/pi.sh && echo "postinst OK"
+            dpkg-deb --ctrl-tarfile "$d" | tar -xO ./postrm > /tmp/pr.sh
+            sh -n /tmp/pr.sh && echo "postrm OK"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: |
+            dist/*.deb
+            dist/*.ipa
+          if-no-files-found: error
+
+      - name: Release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: build-${{ github.run_number }}
+          files: |
+            dist/*.deb
+            dist/*.ipa
+          fail_on_unmatched_files: false
