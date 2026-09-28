@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 env:
-  VERSION: 1.2.0
+  VERSION: 1.2.1
   UL_APP_NAME: ${{ secrets.UL_APP_NAME }}
   UL_BIN_NAME: ${{ secrets.UL_BIN_NAME }}
   UL_BUNDLE_ID: ${{ secrets.UL_BUNDLE_ID }}

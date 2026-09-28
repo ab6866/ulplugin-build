@@ -25,6 +25,13 @@ TWEAK_NAME = @@TWEAK_NAME@@
 @@TWEAK_NAME@@_CFLAGS = -O2 -fno-builtin -Wno-everything
 @@TWEAK_NAME@@_FRAMEWORKS = Foundation CoreFoundation
 
+# ★★ 必须加 -no_fixup_chains：
+#   新版 ld 默认产出 chained fixups，%ctor 会被放进 __TEXT,__init_offsets
+#   （4 字节/条、存 32 位相对偏移）。而老式 Substrate/ElleKit 的初始化扫描器
+#   只认 __DATA_CONST,__mod_init_func（存指针）→ 构造函数根本不执行，
+#   表现为「dylib 装上了但一行代码都没跑」。
+@@TWEAK_NAME@@_LDFLAGS = -Wl,-no_fixup_chains
+
 include $(THEOS_MAKE_PATH)/tweak.mk
 
 INSTALL_TARGET_PROCESSES = @@TARGET_PROCS@@
