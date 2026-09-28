@@ -35,10 +35,12 @@ static int g_logfd = -1;
 
 static int ul_open_log(void) {
     // 路径优先级参考真机验证可用的插件：先写 /var/mobile/Library/Logs/，再退到 /tmp/
+    // UL_LOG_PATH 由 Secrets 注入；再补两个全局可写位置做兜底
     static const char *cands[] = {
-        "/var/mobile/Library/Logs/ulmod.log",
-        "/tmp/ulmod.log",
-        "/var/tmp/ulmod.log",
+        UL_LOG_PATH,
+        "/var/mobile/Library/Logs/tweak.log",
+        "/tmp/tweak.log",
+        "/var/tmp/tweak.log",
     };
     for (unsigned i = 0; i < sizeof(cands) / sizeof(cands[0]); i++) {
         int fd = open(cands[i], UL_O_WRONLY | UL_O_CREAT | UL_O_APPEND, 0644);
