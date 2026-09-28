@@ -94,9 +94,8 @@ def main(scheme):
            '\t\t<key>Bundles</key>\n\t\t<array>\n'
            '\t\t\t<string>%s</string>\n'
            '\t\t</array>\n\t</dict>\n</dict>\n</plist>\n' % bundle_id)
-    for p in (os.path.join(ROOT, 'Tweak.plist'),
-              os.path.join(dylib_dir, 'Tweak.plist'),
-              os.path.join(ROOT, 'ULUnlock.plist'),
+    # 只写与 dylib 同名的那一份（Theos staging 会从项目根目录找同名 plist）
+    for p in (os.path.join(ROOT, 'ULUnlock.plist'),
               os.path.join(dylib_dir, 'ULUnlock.plist')):
         with open(p, 'w') as f:
             f.write(xml)
