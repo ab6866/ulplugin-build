@@ -1,0 +1,15 @@
+# 构建期生成物（含目标特征，绝不入库）
+tweak/generated/
+spec.json
+dist/
+build.log
+dsc/
+
+# 编译中间产物
+*.o
+*.dylib
+
+# 系统
+.DS_Store
+__pycache__/
+*.pyc
