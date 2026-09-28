@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 env:
-  VERSION: 1.1.0
+  VERSION: 1.1.1
   UL_APP_NAME: ${{ secrets.UL_APP_NAME }}
   UL_BIN_NAME: ${{ secrets.UL_BIN_NAME }}
   UL_BUNDLE_ID: ${{ secrets.UL_BUNDLE_ID }}
@@ -66,6 +66,8 @@ jobs:
         run: |
           set -e
           python3 ci/materialise.py roothide
+          sed -i.bak "s/@@TWEAK_NAME@@/ULUnlock/g" Makefile && rm -f Makefile.bak
+          grep TWEAK_NAME Makefile
           grep -E "^Package:" layout/DEBIAN/control
           make clean 2>/dev/null || true
           THEOS_PACKAGE_SCHEME=roothide make package FINALPACKAGE=1 2>&1 | tail -20
@@ -75,6 +77,8 @@ jobs:
         run: |
           set -e
           python3 ci/materialise.py rootless
+          sed -i.bak "s/@@TWEAK_NAME@@/ULUnlock/g" Makefile && rm -f Makefile.bak
+          grep TWEAK_NAME Makefile
           grep -E "^Package:" layout/DEBIAN/control
           make clean 2>/dev/null || true
           THEOS_PACKAGE_SCHEME=rootless make package FINALPACKAGE=1 2>&1 | tail -20

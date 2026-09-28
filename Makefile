@@ -20,7 +20,7 @@ export THEOS_PACKAGE_SCHEME ?= roothide
 
 include $(THEOS)/makefiles/common.mk
 
-TWEAK_NAME = Tweak
+TWEAK_NAME = @@TWEAK_NAME@@
 Tweak_FILES = Tweak.x
 Tweak_CFLAGS = -O2 -fno-builtin -Wno-everything
 Tweak_FRAMEWORKS = Foundation CoreFoundation

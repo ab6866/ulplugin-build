@@ -86,15 +86,23 @@ def main(scheme):
     # ---- filter plist（顶层必须直接是 Filter）----
     # Theos 在 staging 阶段从**项目根目录**读 Tweak.plist，两种位置都放一份。
     flt = {'Filter': {'Bundles': [bundle_id]}}
-    for p in (os.path.join(ROOT, 'Tweak.plist'), os.path.join(dylib_dir, 'Tweak.plist')):
-        with open(p, 'wb') as f:
-            plistlib.dump(flt, f)
+    # 用 XML 格式（与真机验证过的包一致），避免二进制 plist 的解析差异
+    xml = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+           '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" '
+           '"http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+           '<plist version="1.0">\n<dict>\n\t<key>Filter</key>\n\t<dict>\n'
+           '\t\t<key>Bundles</key>\n\t\t<array>\n'
+           '\t\t\t<string>%s</string>\n'
+           '\t\t</array>\n\t</dict>\n</dict>\n</plist>\n' % bundle_id)
+    for p in (os.path.join(ROOT, 'Tweak.plist'),
+              os.path.join(dylib_dir, 'Tweak.plist'),
+              os.path.join(ROOT, 'ULUnlock.plist'),
+              os.path.join(dylib_dir, 'ULUnlock.plist')):
+        with open(p, 'w') as f:
+            f.write(xml)
 
     # ---- 维护脚本：结束目标进程，让下次冷启动重新注入 ----
-    postinst = '''#!/bin/sh
-# 结束目标进程，使 dylib 在下次冷启动时重新注入
-trap 'exit 0' EXIT
-kill_app() {
+    KILL_FN = """kill_app() {
     f=0
     for c in /var/jb/bin/launchctl /var/jb/usr/bin/launchctl /bin/launchctl /usr/bin/launchctl; do
         [ -x "$c" ] && { "$c" killall "$1" >/dev/null 2>&1 && f=1; break; }
@@ -112,16 +120,22 @@ kill_app() {
         done
     fi
 }
-%s
-echo "[tweak] 已结束目标进程，重新打开 App 即生效"
-exit 0
-''' % '\n'.join('kill_app %s' % p for p in target_procs.split(','))
-    postrm = '''#!/bin/sh
-trap 'exit 0' EXIT
-%s
-echo "[tweak] 卸载完成"
-exit 0
-''' % '\n'.join('kill_app %s' % p for p in target_procs.split(','))
+"""
+    procs = [x for x in target_procs.split(',') if x]
+    calls = '\n'.join('kill_app %s' % x for x in procs)
+
+    postinst = ('#!/bin/sh\n'
+                '# 结束目标进程，使 dylib 在下次冷启动时重新注入\n'
+                'trap \'exit 0\' EXIT\n'
+                + KILL_FN + calls + '\n'
+                'echo "[tweak] 已结束目标进程，重新打开 App 即生效"\n'
+                'exit 0\n')
+    # postrm 必须自带 kill_app 定义（dpkg 有两个独立脚本，不共享函数）
+    postrm = ('#!/bin/sh\n'
+              'trap \'exit 0\' EXIT\n'
+              + KILL_FN + calls + '\n'
+              'echo "[tweak] 卸载完成"\n'
+              'exit 0\n')
     for n, body in (('postinst', postinst), ('postrm', postrm)):
         path = os.path.join(LAYOUT, 'DEBIAN', n)
         open(path, 'w').write(body)
@@ -134,7 +148,13 @@ exit 0
     other = 'com.6866.tweak.%s' % ('rootless' if scheme == 'roothide' else 'roothide')
     ctrl = ctrl.replace('@@PKG@@', pkg)
     ctrl = ctrl.replace('@@NAME@@', 'Tweak-%s' % scheme)
+    # 接管同名 dylib，避免 dpkg 因 "trying to overwrite" 拒绝安装。
+    # 注意 dpkg 对重复字段只取最后一个，必须合并而不能追加。
     ctrl = ctrl.replace('@@OTHER@@', other)
+    old_repl = 'Replaces: %s' % other
+    ctrl = ctrl.replace(old_repl,
+        'Replaces: %s, com.6866.subtrackerunlock.roothide, com.6866.subtrackerunlock.rootless' % other)
+    ctrl += 'Breaks: com.6866.subtrackerunlock.roothide, com.6866.subtrackerunlock.rootless\n'
     open(os.path.join(LAYOUT, 'DEBIAN', 'control'), 'w').write(ctrl)
 
     print('materialised:')
