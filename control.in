@@ -1,0 +1,10 @@
+Package: @@PKG@@
+Name: @@NAME@@
+Version: @@VERSION@@
+Description: Runtime modification utility
+Maintainer: 6866
+Author: 6866
+Section: Tweaks
+Depends: mobilesubstrate
+Conflicts: @@OTHER@@
+Replaces: @@OTHER@@

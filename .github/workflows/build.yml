@@ -1,0 +1,106 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  VERSION: 1.1.0
+  UL_APP_NAME: ${{ secrets.UL_APP_NAME }}
+  UL_BIN_NAME: ${{ secrets.UL_BIN_NAME }}
+  UL_BUNDLE_ID: ${{ secrets.UL_BUNDLE_ID }}
+  UL_TARGET_PROCS: ${{ secrets.UL_TARGET_PROCS }}
+  UL_IMAGE_BASE: ${{ secrets.UL_IMAGE_BASE }}
+  UL_TEXT_SPAN: ${{ secrets.UL_TEXT_SPAN }}
+  UL_PATCHES: ${{ secrets.UL_PATCHES }}
+  UL_LOG_PATH: ${{ secrets.UL_LOG_PATH }}
+
+jobs:
+  build:
+    name: theos build
+    # ★ 必须是 macOS runner：只有 Apple 官方 iOS SDK 才能产出真 arm64e 切片。
+    #   Linux clang 编 arm64e 与 arm64 结果相同（ptrauth 指令 0 条），
+    #   而 RootHide 环境需要 arm64e → 单 arm64 包会被判定不匹配、静默不加载。
+    runs-on: macos-14
+    timeout-minutes: 40
+
+    env:
+      THEOS: ${{ github.workspace }}/theos
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain evidence
+        run: |
+          sw_vers | head -2
+          uname -m
+          clang --version | head -1
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          echo "iOS SDK: $(xcrun --sdk iphoneos --show-sdk-version)"
+          # 证明 arm64e 真的能编出 ptrauth 指令（arm64 应为 0）
+          printf 'extern int f(int);\nint g(int x){return f(x)+1;}\n' > /tmp/p.c
+          for A in arm64 arm64e; do
+            clang -c -O2 -arch "$A" -isysroot "$SDK" -miphoneos-version-min=15.0 -o "/tmp/p_$A.o" /tmp/p.c
+            N="$(otool -tv "/tmp/p_$A.o" | grep -cE 'paciasp|autiasp|pacibsp|autibsp' || true)"
+            echo "  -arch $A : pac/aut = $N"
+          done
+
+      - name: Install ldid + dpkg
+        run: brew install ldid dpkg || true
+
+      - name: Install rootHide Theos
+        run: |
+          set -e
+          git clone --recursive --depth=1 https://github.com/roothide/theos.git "$THEOS"
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          VER="$(xcrun --sdk iphoneos --show-sdk-version)"
+          mkdir -p "$THEOS/sdks"
+          [ -e "$THEOS/sdks/iPhoneOS$VER.sdk" ] || ln -s "$SDK" "$THEOS/sdks/iPhoneOS$VER.sdk"
+          ls -d "$THEOS"/sdks/*.sdk
+
+      - name: Materialise project from secrets
+        run: |
+          set -e
+          python3 ci/materialise.py
+          echo "--- 生成的 Tweak.x 头部 ---"
+          head -20 Tweak.x
+          echo "--- filter plist ---"
+          cat layout/Library/MobileSubstrate/DynamicLibraries/Tweak.plist
+
+      - name: Build rootHide package
+        run: |
+          set -e
+          make clean 2>/dev/null || true
+          THEOS_PACKAGE_SCHEME=roothide make package FINALPACKAGE=1 2>&1 | tail -40
+          ls -la packages/
+
+      - name: Build rootless package
+        run: |
+          set -e
+          make clean 2>/dev/null || true
+          THEOS_PACKAGE_SCHEME=rootless make package FINALPACKAGE=1 2>&1 | tail -40
+          ls -la packages/
+
+      - name: Verify artifacts
+        run: |
+          set -e
+          sh ci/verify_packages.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: dist/*.deb
+          if-no-files-found: error
+
+      - name: Release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: build-${{ github.run_number }}
+          files: dist/*.deb
+          fail_on_unmatched_files: false
