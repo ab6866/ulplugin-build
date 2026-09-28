@@ -4,6 +4,14 @@
 # ============================================================================
 set -e
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+
+# macOS runner 用 Apple 自带工具；Linux 用 llvm-* 前缀
+if command -v lipo >/dev/null 2>&1; then
+    LIPO=lipo; OTOOL=otool; OBJDUMP=objdump
+else
+    LIPO=llvm-lipo; OTOOL=llvm-otool; OBJDUMP=llvm-objdump
+fi
+echo "工具: $LIPO / $OTOOL / $OBJDUMP"
 mkdir -p "$ROOT/dist"
 cd "$ROOT"
 
@@ -36,10 +44,10 @@ for d in "$ROOT/dist"/*.deb; do
     [ -n "$DY" ] || { echo "  !! 包内无 dylib"; fails=$((fails+1)); continue; }
 
     echo "  ---- dylib 架构 ----"
-    llvm-lipo -info "$DY" | sed 's/^/    /'
+    LIPO -info "$DY" | sed 's/^/    /'
 
     for arch in arm64 arm64e; do
-        llvm-lipo -thin "$arch" "$DY" -output "/tmp/vfy_$arch.dylib" 2>/dev/null || {
+        LIPO -thin "$arch" "$DY" -output "/tmp/vfy_$arch.dylib" 2>/dev/null || {
             echo "    !! 缺 $arch 切片"
             fails=$((fails+1))
             continue
@@ -48,11 +56,11 @@ for d in "$ROOT/dist"/*.deb; do
 import struct,sys
 d=open(sys.argv[1],'rb').read()
 print(struct.unpack_from('<i',d,8)[0])" "/tmp/vfy_$arch.dylib")
-        PTR=$(llvm-objdump -d "/tmp/vfy_$arch.dylib" 2>/dev/null | grep -cE 'paciasp|autiasp|pacibsp|autibsp' || true)
-        IO=$(llvm-otool -l "/tmp/vfy_$arch.dylib" | grep -c __init_offsets || true)
-        MI=$(llvm-objdump -h "/tmp/vfy_$arch.dylib" 2>/dev/null | grep -c mod_init_func || true)
-        SG=$(llvm-otool -l "/tmp/vfy_$arch.dylib" | grep -c LC_CODE_SIGNATURE || true)
-        RB=$(llvm-otool -l "/tmp/vfy_$arch.dylib" | grep -c LC_DYLD_CHAINED_FIXUPS || true)
+        PTR=$(OBJDUMP -d "/tmp/vfy_$arch.dylib" 2>/dev/null | grep -cE 'paciasp|autiasp|pacibsp|autibsp' || true)
+        IO=$(OTOOL -l "/tmp/vfy_$arch.dylib" | grep -c __init_offsets || true)
+        MI=$(OBJDUMP -h "/tmp/vfy_$arch.dylib" 2>/dev/null | grep -c mod_init_func || true)
+        SG=$(OTOOL -l "/tmp/vfy_$arch.dylib" | grep -c LC_CODE_SIGNATURE || true)
+        RB=$(OTOOL -l "/tmp/vfy_$arch.dylib" | grep -c LC_DYLD_CHAINED_FIXUPS || true)
         echo "    [$arch] cpusubtype=$SUB ptrauth=$PTR __init_offsets=$IO chained=$RB 签名=$SG"
         # 成功产物形态：__init_offsets>=1 且 LC_DYLD_CHAINED_FIXUPS>=1（现代 Theos 默认）
         [ "${IO:-0}" -ge 1 ] || [ "${MI:-0}" -ge 1 ] || { echo "      !! 既无 __init_offsets 也无 __mod_init_func（入口段缺失）"; fails=$((fails+1)); }
@@ -63,7 +71,7 @@ print(struct.unpack_from('<i',d,8)[0])" "/tmp/vfy_$arch.dylib")
     #   若为 0，说明是用 Linux clang 编的"伪 arm64e"（手工改 cpusubtype），
     #   dyld 会按 arm64e 规则认证从未签名的指针 → 构造器不执行 → 装了没反应。
     if [ -f /tmp/vfy_arm64e.dylib ]; then
-        E=$(llvm-objdump -d /tmp/vfy_arm64e.dylib 2>/dev/null | grep -cE 'paciasp|autiasp|pacibsp|autibsp' || true)
+        E=$(OBJDUMP -d /tmp/vfy_arm64e.dylib 2>/dev/null | grep -cE 'paciasp|autiasp|pacibsp|autibsp' || true)
         if [ "${E:-0}" -gt 0 ]; then
             echo "    ★ arm64e 切片含 $E 条 ptrauth 指令（真 arm64e，非伪装）"
         else
